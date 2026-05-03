@@ -9,8 +9,8 @@ done
 
 echo "criando schema..."
 
-psql postgresql://postgres:postgres@db:5432/postgres -f /app/sql/schema.sql
+psql postgresql://postgres:postgres@db:5432/postgres -f /app/worker/sql/schema.sql
 
 echo "executando pipeline..."
 
-python -m worker
+uv run python /app/worker/worker.py

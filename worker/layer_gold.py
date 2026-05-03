@@ -10,7 +10,7 @@ class GoldLayerProcessor:
         DB_NAME = os.getenv("POSTGRES_DB", "postgres")
         DB_USER = os.getenv("POSTGRES_USER", "postgres")
         DB_PASS = os.getenv("POSTGRES_PASSWORD", "postgres")
-        DB_HOST = os.getenv("DB_HOST", "localhost")
+        DB_HOST = os.getenv("DB_HOST", "db")
         DB_PORT = os.getenv("DB_PORT", "5432")
         DB_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
@@ -27,9 +27,8 @@ class GoldLayerProcessor:
 
         df = self._prepare(df)
 
-        self._copy_to_staging(df)
-        self._merge_dimensions()
-        self._merge_fact()
+        self._merge_dimensions(df)
+        self._merge_fact(df)
 
     def _prepare(self, df):
 
@@ -42,53 +41,61 @@ class GoldLayerProcessor:
             "original_language", "status"
         ]].rename(columns={"id": "movie_id"})
 
-    def _copy_to_staging(self, df):
-
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as tmp:
-
-            df.to_csv(tmp.name, index=False, header=False)
-
-            conn = self.engine.raw_connection()
-            try:
-                cur = conn.cursor()
-                with open(tmp.name, "r") as f:
-                    cur.copy_expert("""
-                        COPY staging_movies (
-                            movie_id, title, release_date,
-                            revenue, budget, profit,
-                            vote_average, vote_count, popularity,
-                            original_language, status
-                        )
-                        FROM STDIN WITH CSV
-                    """, f)
-                conn.commit()
-            finally:
-                cur.close()
-                conn.close()
-
-    def _merge_dimensions(self):
+    def _merge_dimensions(self, df):
 
         with self.engine.begin() as conn:
 
-            conn.execute(text("""
-                INSERT INTO dim_language (language_code)
-                SELECT DISTINCT original_language
-                FROM staging_movies
-                WHERE original_language IS NOT NULL
-                ON CONFLICT (language_code) DO NOTHING
-            """))
+            languages = df["original_language"].dropna().unique().tolist()
 
-            conn.execute(text("""
-                INSERT INTO dim_status (status)
-                SELECT DISTINCT status
-                FROM staging_movies
-                WHERE status IS NOT NULL
-                ON CONFLICT (status) DO NOTHING
-            """))
+            if languages:
+                conn.execute(
+                    text("""
+                        INSERT INTO dim_language (language_code)
+                        SELECT UNNEST(:languages)
+                        ON CONFLICT (language_code) DO NOTHING
+                    """),
+                    {"languages": languages}
+                )
 
-    def _merge_fact(self):
+            statuses = df["status"].dropna().unique().tolist()
+
+            if statuses:
+                conn.execute(
+                    text("""
+                        INSERT INTO dim_status (status)
+                        SELECT UNNEST(:statuses)
+                        ON CONFLICT (status) DO NOTHING
+                    """),
+                    {"statuses": statuses}
+                )
+    def _merge_fact(self, df):
 
         with self.engine.begin() as conn:
+
+            dim_language = pd.read_sql("SELECT id, language_code FROM dim_language", conn)
+            dim_status = pd.read_sql("SELECT id, status FROM dim_status", conn)
+
+            df = df.merge(
+                dim_language.rename(columns={"id": "dim_language_id"}),
+                left_on="original_language",
+                right_on="language_code",
+                how="left"
+            )
+
+            df = df.merge(
+                dim_status.rename(columns={"id": "dim_status_id"}),
+                on="status",
+                how="left"
+            )
+
+            fact_df = df[[
+                "movie_id", "title", "release_date",
+                "revenue", "budget", "profit",
+                "vote_average", "vote_count", "popularity",
+                "dim_language_id", "dim_status_id"
+            ]]
+
+            fact_df.to_sql("fact_movies_tmp", conn, if_exists="replace", index=False)
 
             conn.execute(text("""
                 INSERT INTO fact_movies (
@@ -97,24 +104,8 @@ class GoldLayerProcessor:
                     vote_average, vote_count, popularity,
                     dim_language_id, dim_status_id
                 )
-                SELECT
-                    s.movie_id,
-                    s.title,
-                    s.release_date,
-                    s.revenue,
-                    s.budget,
-                    s.profit,
-                    s.vote_average,
-                    s.vote_count,
-                    s.popularity,
-                    dl.id,
-                    ds.id
-                FROM staging_movies s
-                LEFT JOIN dim_language dl
-                    ON s.original_language = dl.language_code
-                LEFT JOIN dim_status ds
-                    ON s.status = ds.status
-
+                SELECT *
+                FROM fact_movies_tmp
                 ON CONFLICT (movie_id)
                 DO UPDATE SET
                     title = EXCLUDED.title,
@@ -129,4 +120,5 @@ class GoldLayerProcessor:
                     dim_status_id = EXCLUDED.dim_status_id,
                     updated_at = CURRENT_TIMESTAMP
             """))
-            conn.execute(text("TRUNCATE staging_movies"))
+
+            conn.execute(text("DROP TABLE fact_movies_tmp"))

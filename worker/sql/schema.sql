@@ -25,5 +25,19 @@ CREATE TABLE IF NOT EXISTS fact_movies (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS staging_movies (
+    movie_id INT,
+    title TEXT,
+    release_date DATE,
+    revenue NUMERIC,
+    budget NUMERIC,
+    profit NUMERIC,
+    vote_average NUMERIC,
+    vote_count INT,
+    popularity NUMERIC,
+    original_language TEXT,
+    status TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_fact_release_date ON fact_movies(release_date);
 CREATE INDEX IF NOT EXISTS idx_fact_language ON fact_movies(dim_language_id);

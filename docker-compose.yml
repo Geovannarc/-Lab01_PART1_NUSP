@@ -6,7 +6,7 @@ services:
     container_name: postgres_database
     restart: always
     environment:
-      POSTGRES_DB: worker_db
+      POSTGRES_DB: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
@@ -15,19 +15,21 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   worker:
-    build: ./worker
+    build: 
+      context: .
+      dockerfile: worker/Dockerfile
     container_name: worker
     restart: always
     depends_on:
       - db
     environment:
-      POSTGRES_DB: worker_db
+      POSTGRES_DB: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       DB_HOST: db
       DB_PORT: 5432
-      RAW_INPUT_PATH: /app
-      RAW_OUTPUT_PATH: /app
+      RAW_INPUT_PATH: /app/worker
+      RAW_OUTPUT_PATH: /app/worker
 
 volumes:
   postgres_data:

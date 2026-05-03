@@ -1,14 +1,16 @@
-FROM python:3.11-slim
+FROM python:3.11
+
+RUN pip install uv
 
 WORKDIR /app
+COPY /pyproject.toml /uv.lock ./
+RUN uv sync --frozen
 
 COPY . .
 
-RUN pip install --no-cache-dir -r requirements.txt
-
 RUN apt-get update && apt-get install -y postgresql-client
 
-COPY entrypoint.sh /entrypoint.sh
+COPY /worker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
