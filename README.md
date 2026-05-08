@@ -86,6 +86,7 @@ production_companies	string	Empresas produtoras
 Durante o processamento na camada Silver, foram identificados os seguintes problemas:
 
 - Valores nulos
+title: alta quantidade de valores vazios
 overview: alta quantidade de valores vazios
 homepage: grande volume de dados ausentes
 release_date: registros inválidos ou nulos
@@ -125,17 +126,82 @@ SELECT COUNT(*) FROM fact_movies;
 SELECT * FROM dim_language LIMIT 10;
 ## Exemplos de Queries
 - Top filmes por lucro
-```
-SELECT title, profit
-FROM fact_movies
-ORDER BY profit DESC
+SELECT
+    m.movie_id,
+    m.title,
+    m.release_date,
+    m.revenue,
+    m.budget,
+    m.profit
+FROM dim_movies m
+ORDER BY m.profit DESC
 LIMIT 10;
 ```
 
-- Receita por idioma
+- Quais gêneros têm, em média, maior avaliação (vote_average)?
 ```
-SELECT d.language_code, SUM(f.revenue)
-FROM fact_movies f
-JOIN dim_language d ON f.dim_language_id = d.id
-GROUP BY d.language_code;
+SELECT
+    g.genre_name,
+    COUNT(DISTINCT m.movie_id) AS qtd_filmes,
+    AVG(m.vote_average)        AS media_nota
+FROM dim_movies m
+JOIN bridge_movie_genre bg ON m.movie_id = bg.movie_id
+JOIN dim_genre g          ON bg.genre_id = g.genre_id
+GROUP BY g.genre_name
+HAVING COUNT(DISTINCT m.movie_id) >= 5  
+ORDER BY media_nota DESC;
+```
+
+- Por país de produção, qual o faturamento total e lucro médio dos filmes?
+
+```
+SELECT
+    c.country_name,
+    COUNT(DISTINCT m.movie_id) AS qtd_filmes,
+    SUM(m.revenue)             AS receita_total,
+    AVG(m.profit)              AS lucro_medio
+FROM dim_movies m
+JOIN bridge_movie_production_country bpc
+    ON m.movie_id = bpc.movie_id
+JOIN dim_production_country c
+    ON bpc.production_country_id = c.country_id
+GROUP BY c.country_name
+ORDER BY receita_total DESC;
+```
+
+- Quais produtoras estão associadas aos filmes com maior retorno sobre investimento (ROI)?
+```
+SELECT
+    pc.company_name,
+    COUNT(DISTINCT m.movie_id)                               AS qtd_filmes,
+    AVG(CASE WHEN m.budget > 0 THEN m.profit / m.budget END) AS roi_medio,
+    SUM(m.profit)                                            AS lucro_total
+FROM dim_movies m
+JOIN bridge_movie_production_company bpc
+    ON m.movie_id = bpc.movie_id
+JOIN dim_production_company pc
+    ON bpc.production_company_id = pc.company_id
+GROUP BY pc.company_name
+HAVING COUNT(DISTINCT m.movie_id) >= 5   -- opcional
+ORDER BY roi_medio DESC;
+```
+
+- Evolução anual de faturamento e lucro por idioma original do filme
+
+```
+SELECT
+    EXTRACT(YEAR FROM m.release_date) AS ano,
+    l.language_code,
+    COUNT(*)               AS qtd_filmes,
+    SUM(m.revenue)         AS receita_total,
+    SUM(m.profit)          AS lucro_total,
+    AVG(m.vote_average)    AS nota_media
+FROM dim_movies m
+JOIN bridge_movie_language bl
+    ON m.movie_id = bl.movie_id
+JOIN dim_language l
+    ON bl.language_id = l.language_id
+WHERE m.release_date IS NOT NULL
+GROUP BY ano, l.language_code
+ORDER BY ano, receita_total DESC;
 ```
